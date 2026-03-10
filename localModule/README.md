@@ -10,4 +10,8 @@
 6. Check the directory content
 7. Next time, first fetch, then load
 
+Score for each session type can be set on **line 100**
+
+## Credits
+
 *made by HG and GG*
