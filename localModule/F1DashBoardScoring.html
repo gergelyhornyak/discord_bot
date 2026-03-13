@@ -94,8 +94,8 @@
         const F1App = {
             config: {
                 apiBase: "https://api.openf1.org/v1",
-                fetchDelay: 1000,
-                players: ["Bernadett", "Csenge", "Gábor", "Marci", "Vencel", "Zsombor"],
+                fetchDelay: 1200,
+                players: ["Bernadett", "Csenge", "Gábor", "Geri", "Marci", "Vencel", "Zsombor"],
                 topTeams: ['Ferrari', 'Red Bull Racing', 'Mercedes'],
                 scoringWeights: {
                     fp1: 1, fp2: 1, fp3: 1,
@@ -241,35 +241,67 @@
                     this.updateStatus(`Processing: ${job.label}...`);
                     const container = document.getElementById(job.id);
                     const drivers = await this.getDriverMap(job.sKey);
-                    const posRes = await fetch(`${this.config.apiBase}/position?session_key=${job.sKey}&position<=${job.n}`);
+                    
+                    // Fetch full positions to determine BOTR correctly
+                    const posRes = await fetch(`${this.config.apiBase}/position?session_key=${job.sKey}`);
                     const posData = await posRes.json();
+                    
+                    // Filter for latest position per driver
                     const latest = {};
-                    posData.forEach(entry => { if (!latest[entry.position] || entry.date > latest[entry.position].date) latest[entry.position] = entry; });
-                    let html = Object.values(latest).sort((a,b)=>a.position-b.position).map(r => {
+                    posData.forEach(entry => { 
+                        if (!latest[entry.driver_number] || entry.date > latest[entry.driver_number].date) {
+                            latest[entry.driver_number] = entry;
+                        }
+                    });
+
+                    // Sort full field by position
+                    const fullResults = Object.values(latest).sort((a,b) => a.position - b.position);
+                    
+                    // Render Top 1 or Top 3 based on job type
+                    let html = fullResults.slice(0, job.n).map(r => {
                         const info = drivers[r.driver_number] || { name: `Driver #${r.driver_number}`, team: "Unknown" };
                         return `<div class="entry" data-driver-num="${r.driver_number}"><span class="pos">P${r.position}</span><div><span class="driver-name">${info.name}</span><span class="team-name">${info.team}</span></div></div>`;
                     }).join('');
-                    if (job.isRace || job.isQualy) html += await this.fetchMetadataHtml(job, drivers);
+
+                    if (job.isRace || job.isQualy) {
+                        // Calculate BOTR: First driver P4 or lower AND not in top teams
+                        const botrDriver = fullResults.find(r => 
+                            r.position > 3 && 
+                            !this.config.topTeams.includes(drivers[r.driver_number]?.team)
+                        );
+                        html += await this.fetchMetadataHtml(job, drivers, botrDriver);
+                    }
+                    
                     container.innerHTML = html || "No Results Found";
                     await new Promise(r => setTimeout(r, this.config.fetchDelay));
                 }
-                this.dom.truthPanel.style.display = 'block'; // Show manual result entry
+                this.dom.truthPanel.style.display = 'block';
                 this.updateStatus("All Data Loaded. Please select Official DotD before calculating.");
                 this.state.isWorking = false;
                 this.dom.fetchBtn.disabled = false;
             },
-            async fetchMetadataHtml(job, drivers) {
-                const lapRes = await fetch(`${this.config.apiBase}/laps?session_key=${job.sKey}`);
-                const lapData = await lapRes.json();
-                const validLaps = lapData.filter(l => l.lap_duration !== null);
-                const botrLap = validLaps.filter(l => !this.config.topTeams.includes(drivers[l.driver_number]?.team)).reduce((p, c) => (c.lap_duration < p.lap_duration ? c : p), validLaps[0]);
+            async fetchMetadataHtml(job, drivers, botrDriver) {
+                const botrName = drivers[botrDriver?.driver_number]?.name || 'N/A';
+                
                 if (job.isRace) {
+                    const lapRes = await fetch(`${this.config.apiBase}/laps?session_key=${job.sKey}`);
+                    const lapData = await lapRes.json();
+                    const validLaps = lapData.filter(l => l.lap_duration !== null);
                     const fastest = validLaps.reduce((p, c) => (c.lap_duration < p.lap_duration ? c : p), validLaps[0]);
+                    
                     const dnfRes = await fetch(`${this.config.apiBase}/session_result?session_key=${job.sKey}`);
                     const dnfData = await dnfRes.json();
-                    return `<div class="meta-section"><div class="meta-item"><strong>Fastest Lap:</strong> ${drivers[fastest?.driver_number]?.name || 'N/A'}</div><div class="meta-item"><strong>BOTR:</strong> ${drivers[botrLap?.driver_number]?.name || 'N/A'} </div><div class="meta-item"><strong>DNFs:</strong> ${dnfData.filter(d => d.dnf || d.dns).length} </div></div>`;
+                    
+                    return `<div class="meta-section">
+                        <div class="meta-item"><strong>Fastest Lap:</strong> ${drivers[fastest?.driver_number]?.name || 'N/A'}</div>
+                        <div class="meta-item"><strong>BOTR:</strong> ${botrName}</div>
+                        <div class="meta-item"><strong>DNFs:</strong> ${dnfData.filter(d => d.dnf || d.dns).length} </div>
+                    </div>`;
                 }
-                return `<div class="meta-section"><div class="meta-item"><strong>BOTR:</strong> ${drivers[botrLap?.driver_number]?.name || 'N/A'} </div></div>`;
+                
+                return `<div class="meta-section">
+                    <div class="meta-item"><strong>BOTR:</strong> ${botrName}</div>
+                </div>`;
             },
             async getDriverMap(sKey) {
                 const res = await fetch(`${this.config.apiBase}/drivers?session_key=${sKey}`);
@@ -325,4 +357,4 @@
     </script>
 </body>
 </html>
-<!--version 1.0.0-->
+<!--version 1.0.1-->
